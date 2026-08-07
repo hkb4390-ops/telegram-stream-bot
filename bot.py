@@ -1,4 +1,4 @@
-import asyncio
+cio
 
 # Python 3.14 Event Loop Fix
 try:
