@@ -17,13 +17,11 @@ from aiohttp import web
 # ==================== CONFIGURATION ====================
 API_ID = int(os.environ.get("API_ID", "34305725"))
 API_HASH = os.environ.get("API_HASH", "a7439c105c050b5011a90bda4f0e1e90")
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8875728815:AAFUleiY5bNcZc6UofX0qRnHuHeUIPrH3Vg")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8899747292:AAGusFkBrquTmi2gA2DDEm_4f9Woh3Q5XQQ")
 
 WEBSITE_URL = os.environ.get("WEBSITE_URL", "https://hrry.online")
-PORT = int(os.environ.get("PORT", "8080")) # Render usually uses 10000 or 8080 dynamically
+PORT = int(os.environ.get("PORT", "8080"))
 
-# Cloudflare Tunnel / Render Public HTTPS Link
-# Note: Render Dashboard me STREAM_SERVER_URL jarur set karna apni render link se
 raw_stream_url = os.environ.get("STREAM_SERVER_URL", "http://localhost:8080")
 if not raw_stream_url.startswith(("http://", "https://")):
     STREAM_SERVER_URL = f"https://{raw_stream_url}"
@@ -37,18 +35,16 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 
-# Yahan in_memory=True add kiya hai taaki Render par black screen na aaye
 app = Client(
     "HrryStreamBot",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN,
-    in_memory=True 
+    in_memory=True
 )
 
 routes = web.RouteTableDef()
 
-# CORS Preflight Handler
 @routes.options("/stream/{chat_id}/{message_id}")
 async def options_handler(request):
     return web.Response(
@@ -68,7 +64,6 @@ async def root_handler(request):
         "target_website": WEBSITE_URL
     })
 
-# Fixed Video Streaming Endpoint
 @routes.get("/stream/{chat_id}/{message_id}")
 async def stream_handler(request):
     try:
@@ -84,7 +79,6 @@ async def stream_handler(request):
         file_size = media.file_size
         mime_type = getattr(media, "mime_type", "video/mp4") or "video/mp4"
 
-        # Parse Range Header
         range_header = request.headers.get("Range")
         from_bytes = 0
         to_bytes = file_size - 1
@@ -116,7 +110,6 @@ async def stream_handler(request):
         response = web.StreamResponse(status=status_code, headers=headers)
         await response.prepare(request)
 
-        # Pyrogram 1 MB Chunk Calculations (Prevents OFFSET_INVALID)
         CHUNK_SIZE = 1024 * 1024
         start_chunk = from_bytes // CHUNK_SIZE
         skip_first_bytes = from_bytes % CHUNK_SIZE
@@ -139,7 +132,6 @@ async def stream_handler(request):
                 await response.write(chunk)
                 sent_bytes += len(chunk)
             except Exception:
-                # Client closed browser/player connection
                 break
 
             if sent_bytes >= length:
@@ -156,8 +148,6 @@ async def stream_handler(request):
         logging.error(f"Streaming Error: {e}")
         return web.Response(status=500, text=f"Streaming Error: {str(e)}")
 
-
-# Start Command
 @app.on_message(filters.command("start") & filters.private)
 async def start_msg(client, message):
     text = (
@@ -170,8 +160,6 @@ async def start_msg(client, message):
     ])
     await message.reply_text(text, reply_markup=buttons, disable_web_page_preview=True)
 
-
-# Media Handling
 @app.on_message((filters.video | filters.document | filters.audio) & filters.private)
 async def handle_media(client, message):
     status_msg = await message.reply_text("🔄 **Processing video file & generating link...**")
@@ -195,12 +183,8 @@ async def handle_media(client, message):
         )
 
         buttons = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("▶️ Watch & Download on hrry.online", url=web_player_link)
-            ],
-            [
-                InlineKeyboardButton("🔗 Direct Stream Raw Link", url=direct_stream_link)
-            ]
+            [InlineKeyboardButton("▶️ Watch & Download on hrry.online", url=web_player_link)],
+            [InlineKeyboardButton("🔗 Direct Download Link", url=direct_stream_link)]
         ])
 
         await status_msg.edit_text(caption, reply_markup=buttons, disable_web_page_preview=True)
@@ -208,7 +192,6 @@ async def handle_media(client, message):
     except Exception as err:
         logging.error(f"Error handling file: {err}")
         await status_msg.edit_text(f"❌ **Error Details:** `{str(err)}`")
-
 
 async def main():
     server = web.Application()
