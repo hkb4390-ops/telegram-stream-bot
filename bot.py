@@ -151,47 +151,52 @@ async def stream_handler(request):
 @app.on_message(filters.command("start") & filters.private)
 async def start_msg(client, message):
     text = (
-        f"✨ **Welcome to Hrry.online Cloud Player Bot!**\n\n"
-        f"📁 Mujhe koi bhi **Video** ya **Document File** direct chat me bhejein.\n"
-        f"⚡ Main aapko **https://hrry.online** par direct play karne aur high-speed download ka link bana kar dunga."
+        f"✨ **Welcome to Premium Cloud Player!**\n\n"
+        f"🛡 **How to use:**\n"
+        f"Just forward or send me any **Video** or **Document** file here.\n"
+        f"⚡ I will instantly generate a high-speed streaming and download link for you."
     )
     buttons = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🌐 Visit Website", url=WEBSITE_URL)]
+        [InlineKeyboardButton("🌐 Visit Hrry.online", url=WEBSITE_URL)]
     ])
-    await message.reply_text(text, reply_markup=buttons, disable_web_page_preview=True)
+    await message.reply_text(text, reply_markup=buttons, disable_web_page_preview=True, quote=True)
 
 @app.on_message((filters.video | filters.document | filters.audio) & filters.private)
 async def handle_media(client, message):
-    status_msg = await message.reply_text("🔄 **Processing video file & generating link...**")
+    # Bot will reply directly to the file message (quote=True)
+    status_msg = await message.reply_text("🔄 **Extracting file data & generating secure link...**", quote=True)
 
     try:
         chat_id = message.chat.id
         msg_id = message.id
 
         media = message.video or message.document or message.audio
-        raw_name = getattr(media, "file_name", None) or f"Video_{msg_id}.mp4"
+        raw_name = getattr(media, "file_name", None) or f"Premium_Media_{msg_id}.mp4"
         file_size_mb = round(media.file_size / (1024 * 1024), 2)
 
+        # Generating core links (Keep them intact for the web player)
         direct_stream_link = f"{STREAM_SERVER_URL}/stream/{chat_id}/{msg_id}"
         web_player_link = f"{WEBSITE_URL}/?url={urllib.parse.quote(direct_stream_link)}&title={urllib.parse.quote(raw_name)}"
 
+        # Professional and premium caption format
         caption = (
-            f"🎬 **Title:** `{raw_name}`\n"
-            f"📦 **Size:** `{file_size_mb} MB`\n"
-            f"🚀 **Host:** `hrry.online`\n\n"
-            f"👇 **Niche button par click karke direct dekhein:**"
+            f"✅ **File Successfully Processed!**\n\n"
+            f"🎬 **File Name:** `{raw_name}`\n"
+            f"📦 **File Size:** `{file_size_mb} MB`\n"
+            f"🚀 **Cloud Server:** `Hrry Premium`\n\n"
+            f"👇 **Click the button below to Watch or Download seamlessly:**"
         )
 
+        # Removed the direct raw link button as requested
         buttons = InlineKeyboardMarkup([
-            [InlineKeyboardButton("▶️ Watch & Download on hrry.online", url=web_player_link)],
-            [InlineKeyboardButton("🔗 Direct Download Link", url=direct_stream_link)]
+            [InlineKeyboardButton("▶️ Stream & Download Now", url=web_player_link)]
         ])
 
         await status_msg.edit_text(caption, reply_markup=buttons, disable_web_page_preview=True)
 
     except Exception as err:
         logging.error(f"Error handling file: {err}")
-        await status_msg.edit_text(f"❌ **Error Details:** `{str(err)}`")
+        await status_msg.edit_text(f"❌ **Failed to process!**\n\n`{str(err)}`")
 
 async def main():
     server = web.Application()
