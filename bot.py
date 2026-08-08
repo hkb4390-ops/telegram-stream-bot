@@ -1,4 +1,4 @@
-cio
+import asyncio
 
 # Python 3.14 Event Loop Fix
 try:
@@ -20,10 +20,11 @@ API_HASH = os.environ.get("API_HASH", "a7439c105c050b5011a90bda4f0e1e90")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8875728815:AAFUleiY5bNcZc6UofX0qRnHuHeUIPrH3Vg")
 
 WEBSITE_URL = os.environ.get("WEBSITE_URL", "https://hrry.online")
-PORT = int(os.environ.get("PORT", "8088"))
+PORT = int(os.environ.get("PORT", "8080")) # Render usually uses 10000 or 8080 dynamically
 
-# Cloudflare Tunnel Public HTTPS Link
-raw_stream_url = os.environ.get("STREAM_SERVER_URL", "http://localhost:8088")
+# Cloudflare Tunnel / Render Public HTTPS Link
+# Note: Render Dashboard me STREAM_SERVER_URL jarur set karna apni render link se
+raw_stream_url = os.environ.get("STREAM_SERVER_URL", "http://localhost:8080")
 if not raw_stream_url.startswith(("http://", "https://")):
     STREAM_SERVER_URL = f"https://{raw_stream_url}"
 else:
@@ -36,11 +37,13 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 
+# Yahan in_memory=True add kiya hai taaki Render par black screen na aaye
 app = Client(
     "HrryStreamBot",
     api_id=API_ID,
     api_hash=API_HASH,
-    bot_token=BOT_TOKEN
+    bot_token=BOT_TOKEN,
+    in_memory=True 
 )
 
 routes = web.RouteTableDef()
