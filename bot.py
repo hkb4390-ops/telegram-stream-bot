@@ -21,7 +21,7 @@ API_ID = int(os.environ.get("API_ID", "34305725"))
 API_HASH = os.environ.get("API_HASH", "a7439c105c050b5011a90bda4f0e1e90")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8899747292:AAGusFkBrquTmi2gA2DDEm_4f9Woh3Q5XQQ")
 
-# Aapka Private Log Channel ID (Default set)
+# Private Log Channel ID
 LOG_CHANNEL = os.environ.get("LOG_CHANNEL", "-1004364861797") 
 
 WEBSITE_URL = os.environ.get("WEBSITE_URL", "https://hrry-stream.vercel.app/").rstrip("/")
@@ -146,12 +146,13 @@ async def upload_from_web(request):
         except ValueError:
             pass
 
-        # Send File to Telegram Private Channel with FloodWait Handling
+        # Send File to Telegram Private Channel
+        initial_caption = f"🌐 **Web Upload:** `{filename}`\n👤 **Source:** Website Upload"
         try:
             sent_msg = await app.send_document(
                 chat_id=target_chat,
                 document=temp_path,
-                caption=f"🌐 **Web Upload:** `{filename}`"
+                caption=initial_caption
             )
         except FloodWait as f_err:
             logging.warning(f"Telegram Rate Limited: Waiting {f_err.value} seconds")
@@ -159,7 +160,7 @@ async def upload_from_web(request):
             sent_msg = await app.send_document(
                 chat_id=target_chat,
                 document=temp_path,
-                caption=f"🌐 **Web Upload:** `{filename}`"
+                caption=initial_caption
             )
         except RPCError as rpc_err:
             logging.error(f"Telegram RPC Error: {rpc_err}")
@@ -175,6 +176,18 @@ async def upload_from_web(request):
 
         direct_stream_link = f"{STREAM_SERVER_URL}/stream/{chat_id}/{msg_id}"
         web_player_link = f"{WEBSITE_URL}/?url={urllib.parse.quote(direct_stream_link)}&title={urllib.parse.quote(filename)}&type={meta['type']}"
+
+        # Update log channel caption with link
+        try:
+            log_caption = (
+                f"📁 **File:** `{filename}`\n"
+                f"📦 **Size:** `{round(meta['file_size'] / (1024 * 1024), 2)} MB`\n"
+                f"👤 **Source:** Website UI\n\n"
+                f"🔗 **Web Player Link:** {web_player_link}"
+            )
+            await sent_msg.edit_caption(log_caption)
+        except Exception as edit_err:
+            logging.warning(f"Channel caption edit error: {edit_err}")
 
         return web.json_response({
             "status": "success",
@@ -193,13 +206,11 @@ async def upload_from_web(request):
             headers=CORS_HEADERS
         )
     finally:
-        # Safe Temp Disk Cleanup
         if temp_path and os.path.exists(temp_path):
             try:
                 os.remove(temp_path)
             except Exception as clean_err:
                 logging.warning(f"Temp File Removal Failed: {clean_err}")
-        # RAM Cleanup
         gc.collect()
 
 # --- STREAMING ENGINE ENDPOINT ---
@@ -284,7 +295,7 @@ async def stream_handler(request):
         logging.error(f"Streaming Error: {e}")
         return web.Response(status=500, text=f"Streaming Error: {str(e)}", headers=CORS_HEADERS)
 
-# --- TELEGRAM BOT COMMANDS & MEDIA HANDLER ---
+# --- TELEGRAM BOT COMMANDS ---
 @app.on_message(filters.command("start") & filters.private)
 async def start_msg(client, message):
     text = (
@@ -296,7 +307,7 @@ async def start_msg(client, message):
     ])
     await message.reply_text(text, reply_markup=buttons, disable_web_page_preview=True)
 
-# --- 2. TELEGRAM PM UPLOAD -> AUTO COPY TO PRIVATE CHANNEL ---
+# --- 2. TELEGRAM PM UPLOAD -> PRIVATE CHANNEL LOG WITH USER DETAILS ---
 @app.on_message((filters.video | filters.document | filters.audio | filters.photo | filters.voice | filters.animation) & filters.private)
 async def handle_media(client, message):
     status_msg = await message.reply_text("🔄 **Processing and backing up media...**")
@@ -308,18 +319,14 @@ async def handle_media(client, message):
         except ValueError:
             pass
 
-        # Step A: Copy file automatically to Private Channel
-        try:
-            log_msg = await message.copy(chat_id=target_chat)
-            chat_id = log_msg.chat.id
-            msg_id = log_msg.id
-        except Exception as copy_err:
-            logging.error(f"Failed to copy to channel: {copy_err}")
-            # Fallback to user chat ID if channel copy fails
-            chat_id = message.chat.id
-            msg_id = message.id
+        # User Profile Details
+        user = message.from_user
+        user_id = user.id if user else "Unknown"
+        user_name = user.first_name if user else "Unknown User"
+        if user and user.last_name:
+            user_name += f" {user.last_name}"
+        username_str = f"@{user.username}" if (user and user.username) else "No Username"
 
-        # Step B: Get Metadata & Links
         meta = get_media_meta(message)
         if not meta:
             await status_msg.edit_text("❌ **Unsupported media format.**")
@@ -329,21 +336,56 @@ async def handle_media(client, message):
         file_size_mb = round(meta["file_size"] / (1024 * 1024), 2)
         media_type = meta["type"]
 
+        # Step A: Copy file to Private Channel with User Details Initial Caption
+        initial_log_caption = (
+            f"📁 **File Name:** `{raw_name}`\n"
+            f"📦 **Size:** `{file_size_mb} MB`\n"
+            f"👤 **Uploaded By:** {user_name}\n"
+            f"🆔 **User ID:** `{user_id}`\n"
+            f"🌐 **Username:** {username_str}"
+        )
+
+        try:
+            log_msg = await message.copy(chat_id=target_chat, caption=initial_log_caption)
+            chat_id = log_msg.chat.id
+            msg_id = log_msg.id
+        except Exception as copy_err:
+            logging.error(f"Failed to copy to channel: {copy_err}")
+            chat_id = message.chat.id
+            msg_id = message.id
+
+        # Step B: Links Generation
         direct_stream_link = f"{STREAM_SERVER_URL}/stream/{chat_id}/{msg_id}"
         web_player_link = f"{WEBSITE_URL}/?url={urllib.parse.quote(direct_stream_link)}&title={urllib.parse.quote(raw_name)}&type={media_type}"
 
-        caption = (
+        # Update Channel Log with Web Link
+        final_log_caption = (
+            f"📁 **File Name:** `{raw_name}`\n"
+            f"📦 **Size:** `{file_size_mb} MB`\n"
+            f"👤 **Uploaded By:** [{user_name}](tg://user?id={user_id})\n"
+            f"🆔 **User ID:** `{user_id}`\n"
+            f"🌐 **Username:** {username_str}\n\n"
+            f"🔗 **Web Player Link:** {web_player_link}"
+        )
+        try:
+            if 'log_msg' in locals():
+                await log_msg.edit_caption(final_log_caption)
+        except Exception as edit_err:
+            logging.warning(f"Failed to update channel log: {edit_err}")
+
+        # Step C: Reply to User in Bot PM (ONLY Website Link Button, NO Direct Stream Button)
+        user_caption = (
             f"🎬 **Title:** `{raw_name}`\n"
             f"📦 **Size:** `{file_size_mb} MB`\n"
-            f"🚀 **Host:** `hrry.online`"
+            f"🚀 **Host:** `hrry.online`\n\n"
+            f"👇 **Niche button par click karke dekhein / download karein:**"
         )
 
         buttons = InlineKeyboardMarkup([
-            [InlineKeyboardButton("▶️ Access on hrry.online", url=web_player_link)],
-            [InlineKeyboardButton("🔗 Direct Download Link", url=direct_stream_link)]
+            [InlineKeyboardButton("▶️ Watch / Download on Website", url=web_player_link)]
         ])
 
-        await status_msg.edit_text(caption, reply_markup=buttons, disable_web_page_preview=True)
+        await status_msg.edit_text(user_caption, reply_markup=buttons, disable_web_page_preview=True)
 
     except Exception as err:
         logging.error(f"Error handling file: {err}")
