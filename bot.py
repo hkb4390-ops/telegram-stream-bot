@@ -1,6 +1,6 @@
 import asyncio
 
-# Python 3.14 Event Loop Fix
+# Python 3.10+ Event Loop Fix
 try:
     asyncio.get_event_loop()
 except RuntimeError:
@@ -19,13 +19,13 @@ API_ID = int(os.environ.get("API_ID", "34305725"))
 API_HASH = os.environ.get("API_HASH", "a7439c105c050b5011a90bda4f0e1e90")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8899747292:AAGusFkBrquTmi2gA2DDEm_4f9Woh3Q5XQQ")
 
-# Where files uploaded via Web UI will be saved in Telegram ("me" = Saved Messages)
-LOG_CHANNEL = os.environ.get("LOG_CHANNEL", "me") 
+# LOG_CHANNEL: Default Channel ID set (-1004364861797)
+LOG_CHANNEL = os.environ.get("LOG_CHANNEL", "-1004364861797") 
 
-WEBSITE_URL = os.environ.get("WEBSITE_URL", "https://hrry-stream.vercel.app/")
+WEBSITE_URL = os.environ.get("WEBSITE_URL", "https://hrry-stream.vercel.app/").rstrip("/")
 PORT = int(os.environ.get("PORT", "8080"))
 
-raw_stream_url = os.environ.get("STREAM_SERVER_URL", "http://localhost:8080")
+raw_stream_url = os.environ.get("STREAM_SERVER_URL", "http://localhost:8080").rstrip("/")
 if not raw_stream_url.startswith(("http://", "https://")):
     STREAM_SERVER_URL = f"https://{raw_stream_url}"
 else:
@@ -47,6 +47,13 @@ app = Client(
 )
 
 routes = web.RouteTableDef()
+
+# Global CORS Headers
+CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Range, Content-Type, Accept, Authorization, X-Requested-With",
+}
 
 def get_media_meta(message):
     media = message.video or message.audio or message.document or message.photo or message.voice or message.animation
@@ -90,18 +97,10 @@ def get_media_meta(message):
         "type": m_type
     }
 
-# Handle CORS Preflight for Web Uploads
-@routes.options("/upload")
-@routes.options("/stream/{chat_id}/{message_id}")
-async def options_handler(request):
-    return web.Response(
-        status=200,
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Range, Content-Type, Accept",
-        }
-    )
+# Handle All CORS Preflight Requests
+@routes.options("/{path:.*}")
+async def global_options_handler(request):
+    return web.Response(status=200, headers=CORS_HEADERS)
 
 @routes.get("/")
 async def root_handler(request):
@@ -109,23 +108,28 @@ async def root_handler(request):
         "status": "online",
         "service": "Hrry Direct Web Engine",
         "target_website": WEBSITE_URL
-    })
+    }, headers=CORS_HEADERS)
 
 # --- DIRECT WEB UPLOAD ENDPOINT ---
 @routes.post("/upload")
 async def upload_from_web(request):
+    temp_path = None
     try:
         reader = await request.multipart()
         field = await reader.next()
         
         if not field or not field.filename:
-            return web.json_response({"status": "error", "message": "No file provided"}, status=400)
+            return web.json_response(
+                {"status": "error", "message": "No file provided"}, 
+                status=400, 
+                headers=CORS_HEADERS
+            )
             
         filename = field.filename
         os.makedirs("temp_uploads", exist_ok=True)
         temp_path = os.path.join("temp_uploads", filename)
 
-        # Receive stream from Browser
+        # Stream chunk to local disk
         with open(temp_path, "wb") as f:
             while True:
                 chunk = await field.read_chunk()
@@ -133,22 +137,27 @@ async def upload_from_web(request):
                     break
                 f.write(chunk)
 
-        # Upload to Telegram
+        # Chat ID Conversion
         target_chat = LOG_CHANNEL
         try:
             target_chat = int(target_chat)
         except ValueError:
             pass
 
-        sent_msg = await app.send_document(
-            chat_id=target_chat,
-            document=temp_path,
-            caption=f"📁 **Web Upload:** `{filename}`"
-        )
-
-        # Cleanup local file
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+        # Send File to Telegram Channel
+        try:
+            sent_msg = await app.send_document(
+                chat_id=target_chat,
+                document=temp_path,
+                caption=f"📁 **Web Upload:** `{filename}`"
+            )
+        except Exception as tg_err:
+            logging.error(f"Telegram Upload Error: {tg_err}")
+            return web.json_response(
+                {"status": "error", "message": f"Telegram Error: {str(tg_err)}"}, 
+                status=500, 
+                headers=CORS_HEADERS
+            )
 
         meta = get_media_meta(sent_msg)
         chat_id = sent_msg.chat.id
@@ -164,11 +173,22 @@ async def upload_from_web(request):
             "type": meta["type"],
             "stream_link": direct_stream_link,
             "player_link": web_player_link
-        }, headers={"Access-Control-Allow-Origin": "*"})
+        }, headers=CORS_HEADERS)
 
     except Exception as e:
-        logging.error(f"Web Upload Error: {e}")
-        return web.json_response({"status": "error", "message": str(e)}, status=500, headers={"Access-Control-Allow-Origin": "*"})
+        logging.error(f"Web Upload Internal Error: {e}")
+        return web.json_response(
+            {"status": "error", "message": f"Server Internal Error: {str(e)}"}, 
+            status=500, 
+            headers=CORS_HEADERS
+        )
+    finally:
+        # Safe Temporary File Cleanup
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception as clean_err:
+                logging.warning(f"Temp File Removal Failed: {clean_err}")
 
 @routes.get("/stream/{chat_id}/{message_id}")
 async def stream_handler(request):
@@ -179,7 +199,7 @@ async def stream_handler(request):
         message = await app.get_messages(chat_id, msg_id)
         meta = get_media_meta(message)
         if not meta:
-            return web.Response(status=404, text="Media File Not Found")
+            return web.Response(status=404, text="Media File Not Found", headers=CORS_HEADERS)
 
         file_size = meta["file_size"]
         mime_type = meta["mime_type"]
@@ -198,7 +218,7 @@ async def stream_handler(request):
                 pass
 
         if from_bytes >= file_size:
-            return web.Response(status=416, text="Range Not Satisfiable")
+            return web.Response(status=416, text="Range Not Satisfiable", headers=CORS_HEADERS)
 
         length = (to_bytes - from_bytes) + 1
         headers = {
@@ -206,9 +226,7 @@ async def stream_handler(request):
             "Content-Range": f"bytes {from_bytes}-{to_bytes}/{file_size}",
             "Content-Length": str(length),
             "Accept-Ranges": "bytes",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, OPTIONS",
-            "Access-Control-Allow-Headers": "Range, Content-Type, Accept",
+            **CORS_HEADERS
         }
 
         status_code = 206 if range_header else 200
@@ -251,7 +269,7 @@ async def stream_handler(request):
 
     except Exception as e:
         logging.error(f"Streaming Error: {e}")
-        return web.Response(status=500, text=f"Streaming Error: {str(e)}")
+        return web.Response(status=500, text=f"Streaming Error: {str(e)}", headers=CORS_HEADERS)
 
 @app.on_message(filters.command("start") & filters.private)
 async def start_msg(client, message):
@@ -290,7 +308,7 @@ async def handle_media(client, message):
         )
 
         buttons = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"▶️ Access on hrry.online", url=web_player_link)],
+            [InlineKeyboardButton("▶️ Access on hrry.online", url=web_player_link)],
             [InlineKeyboardButton("🔗 Direct Download Link", url=direct_stream_link)]
         ])
 
@@ -316,4 +334,3 @@ if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.run_until_complete(main())
     loop.run_forever()
-
