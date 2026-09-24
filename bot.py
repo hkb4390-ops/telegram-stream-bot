@@ -19,7 +19,7 @@ API_ID = int(os.environ.get("API_ID", "34305725"))
 API_HASH = os.environ.get("API_HASH", "a7439c105c050b5011a90bda4f0e1e90")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8899747292:AAGusFkBrquTmi2gA2DDEm_4f9Woh3Q5XQQ")
 
-WEBSITE_URL = os.environ.get("WEBSITE_URL", "https://hrry.online")
+WEBSITE_URL = os.environ.get("WEBSITE_URL", "https://hrry-stream.vercel.app/")
 PORT = int(os.environ.get("PORT", "8080"))
 
 raw_stream_url = os.environ.get("STREAM_SERVER_URL", "http://localhost:8080")
@@ -60,7 +60,7 @@ async def options_handler(request):
 async def root_handler(request):
     return web.json_response({
         "status": "online",
-        "service": "Hrry.online Direct Stream Engine",
+        "service": "https://hrry-stream.vercel.app/ Direct Stream Engine",
         "target_website": WEBSITE_URL
     })
 
@@ -157,7 +157,7 @@ async def start_msg(client, message):
         f"⚡ I will instantly generate a high-speed streaming and download link for you."
     )
     buttons = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🌐 Visit Hrry.online", url=WEBSITE_URL)]
+        [InlineKeyboardButton("🌐 Visit https://hrry-stream.vercel.app/", url=WEBSITE_URL)]
     ])
     await message.reply_text(text, reply_markup=buttons, disable_web_page_preview=True, quote=True)
 
