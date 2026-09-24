@@ -1,11 +1,4 @@
 import asyncio
-
-# Python 3.14 Event Loop Fix
-try:
-    asyncio.get_event_loop()
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
-
 import os
 import sys
 import logging
@@ -14,11 +7,16 @@ from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiohttp import web
 
+# Python 3.14 Event Loop Fix
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
 # ==================== CONFIGURATION ====================
 API_ID = int(os.environ.get("API_ID", "34305725"))
 API_HASH = os.environ.get("API_HASH", "a7439c105c050b5011a90bda4f0e1e90")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8899747292:AAGusFkBrquTmi2gA2DDEm_4f9Woh3Q5XQQ")
-
 WEBSITE_URL = os.environ.get("WEBSITE_URL", "https://hrry-stream.vercel.app/")
 PORT = int(os.environ.get("PORT", "8080"))
 
@@ -29,40 +27,18 @@ else:
     STREAM_SERVER_URL = raw_stream_url
 # =======================================================
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(asctime)s] [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
-)
+logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [%(levelname)s] %(message)s", handlers=[logging.StreamHandler(sys.stdout)])
 
-app = Client(
-    "HrryStreamBot",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN,
-    in_memory=True
-)
-
+app = Client("HrryStreamBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
 routes = web.RouteTableDef()
 
 @routes.options("/stream/{chat_id}/{message_id}")
 async def options_handler(request):
-    return web.Response(
-        status=200,
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, OPTIONS",
-            "Access-Control-Allow-Headers": "Range, Content-Type, Accept",
-        }
-    )
+    return web.Response(status=200, headers={"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, OPTIONS", "Access-Control-Allow-Headers": "Range, Content-Type, Accept"})
 
 @routes.get("/")
 async def root_handler(request):
-    return web.json_response({
-        "status": "online",
-        "service": "https://hrry-stream.vercel.app/ Direct Stream Engine",
-        "target_website": WEBSITE_URL
-    })
+    return web.json_response({"status": "online", "service": "Hrry.online Direct Stream Engine", "target_website": WEBSITE_URL})
 
 @routes.get("/stream/{chat_id}/{message_id}")
 async def stream_handler(request):
@@ -72,13 +48,19 @@ async def stream_handler(request):
         
         message = await app.get_messages(chat_id, msg_id)
         
-        if not message or not (message.video or message.document or message.audio):
+        if not message or not (message.video or message.document or message.audio or message.photo):
             return web.Response(status=404, text="Media File Not Found")
 
-        media = message.video or message.document or message.audio
+        # Media Type Selection Logic
+        if message.photo:
+            media = message.photo
+            mime_type = "image/jpeg"
+        else:
+            media = message.video or message.document or message.audio
+            mime_type = getattr(media, "mime_type", "application/octet-stream")
+            
         file_size = media.file_size
-        mime_type = getattr(media, "mime_type", "video/mp4") or "video/mp4"
-
+        
         range_header = request.headers.get("Range")
         from_bytes = 0
         to_bytes = file_size - 1
@@ -102,8 +84,6 @@ async def stream_handler(request):
             "Content-Length": str(length),
             "Accept-Ranges": "bytes",
             "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, OPTIONS",
-            "Access-Control-Allow-Headers": "Range, Content-Type, Accept",
         }
 
         status_code = 206 if range_header else 200
@@ -113,7 +93,6 @@ async def stream_handler(request):
         CHUNK_SIZE = 1024 * 1024
         start_chunk = from_bytes // CHUNK_SIZE
         skip_first_bytes = from_bytes % CHUNK_SIZE
-
         sent_bytes = 0
         first_chunk = True
 
@@ -121,10 +100,7 @@ async def stream_handler(request):
             if first_chunk:
                 chunk = chunk[skip_first_bytes:]
                 first_chunk = False
-
-            if not chunk:
-                continue
-
+            if not chunk: continue
             if sent_bytes + len(chunk) > length:
                 chunk = chunk[:length - sent_bytes]
 
@@ -133,70 +109,66 @@ async def stream_handler(request):
                 sent_bytes += len(chunk)
             except Exception:
                 break
-
             if sent_bytes >= length:
                 break
-
-        try:
-            await response.write_eof()
-        except Exception:
-            pass
-
+                
+        try: await response.write_eof()
+        except: pass
         return response
 
     except Exception as e:
         logging.error(f"Streaming Error: {e}")
-        return web.Response(status=500, text=f"Streaming Error: {str(e)}")
+        return web.Response(status=500, text=f"Error: {str(e)}")
+
 
 @app.on_message(filters.command("start") & filters.private)
 async def start_msg(client, message):
-    text = (
-        f"✨ **Welcome to Premium Cloud Player!**\n\n"
-        f"🛡 **How to use:**\n"
-        f"Just forward or send me any **Video** or **Document** file here.\n"
-        f"⚡ I will instantly generate a high-speed streaming and download link for you."
-    )
-    buttons = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🌐 Visit https://hrry-stream.vercel.app/", url=WEBSITE_URL)]
-    ])
-    await message.reply_text(text, reply_markup=buttons, disable_web_page_preview=True, quote=True)
+    text = f"✨ **Welcome to Hrry.online Cloud Engine!**\n\n📁 Send me any **Video, Audio, Photo, or PDF**.\n⚡ I will generate a direct preview & download link."
+    await message.reply_text(text, disable_web_page_preview=True)
 
-@app.on_message((filters.video | filters.document | filters.audio) & filters.private)
+# Added filters.photo
+@app.on_message((filters.video | filters.document | filters.audio | filters.photo) & filters.private)
 async def handle_media(client, message):
-    # Bot will reply directly to the file message (quote=True)
-    status_msg = await message.reply_text("🔄 **Extracting file data & generating secure link...**", quote=True)
+    status_msg = await message.reply_text("🔄 **Processing media file...**")
 
     try:
         chat_id = message.chat.id
         msg_id = message.id
 
-        media = message.video or message.document or message.audio
-        raw_name = getattr(media, "file_name", None) or f"Premium_Media_{msg_id}.mp4"
-        file_size_mb = round(media.file_size / (1024 * 1024), 2)
+        if message.photo:
+            raw_name = f"Photo_{msg_id}.jpg"
+            file_size_mb = round(message.photo.file_size / (1024 * 1024), 2)
+            mime_type = "image/jpeg"
+        else:
+            media = message.video or message.document or message.audio
+            raw_name = getattr(media, "file_name", None) or f"File_{msg_id}"
+            file_size_mb = round(media.file_size / (1024 * 1024), 2)
+            mime_type = getattr(media, "mime_type", "application/octet-stream")
 
-        # Generating core links (Keep them intact for the web player)
         direct_stream_link = f"{STREAM_SERVER_URL}/stream/{chat_id}/{msg_id}"
-        web_player_link = f"{WEBSITE_URL}/?url={urllib.parse.quote(direct_stream_link)}&title={urllib.parse.quote(raw_name)}"
+        
+        # Now passing &mime= to tell frontend how to display the file
+        encoded_mime = urllib.parse.quote(mime_type)
+        web_player_link = f"{WEBSITE_URL}?url={urllib.parse.quote(direct_stream_link)}&title={urllib.parse.quote(raw_name)}&mime={encoded_mime}"
 
-        # Professional and premium caption format
         caption = (
-            f"✅ **File Successfully Processed!**\n\n"
-            f"🎬 **File Name:** `{raw_name}`\n"
-            f"📦 **File Size:** `{file_size_mb} MB`\n"
-            f"🚀 **Cloud Server:** `Hrry Premium`\n\n"
-            f"👇 **Click the button below to Watch or Download seamlessly:**"
+            f"🎬 **File:** `{raw_name}`\n"
+            f"📦 **Size:** `{file_size_mb} MB`\n"
+            f"🚀 **Type:** `{mime_type}`\n\n"
+            f"👇 **Click Below to Stream/View:**"
         )
 
-        # Removed the direct raw link button as requested
         buttons = InlineKeyboardMarkup([
-            [InlineKeyboardButton("▶️ Stream & Download Now", url=web_player_link)]
+            [InlineKeyboardButton("▶️ View / Play Online", url=web_player_link)],
+            [InlineKeyboardButton("🔗 Direct Download Link", url=direct_stream_link)]
         ])
 
         await status_msg.edit_text(caption, reply_markup=buttons, disable_web_page_preview=True)
 
     except Exception as err:
         logging.error(f"Error handling file: {err}")
-        await status_msg.edit_text(f"❌ **Failed to process!**\n\n`{str(err)}`")
+        await status_msg.edit_text(f"❌ **Error:** `{str(err)}`")
+
 
 async def main():
     server = web.Application()
