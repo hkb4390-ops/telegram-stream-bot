@@ -10,8 +10,10 @@ import os
 import sys
 import logging
 import urllib.parse
+import gc
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.errors import FloodWait, RPCError
 from aiohttp import web
 
 # ==================== CONFIGURATION ====================
@@ -19,7 +21,7 @@ API_ID = int(os.environ.get("API_ID", "34305725"))
 API_HASH = os.environ.get("API_HASH", "a7439c105c050b5011a90bda4f0e1e90")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8899747292:AAGusFkBrquTmi2gA2DDEm_4f9Woh3Q5XQQ")
 
-# LOG_CHANNEL: Default Channel ID set (-1004364861797)
+# Aapka Private Log Channel ID (Default set)
 LOG_CHANNEL = os.environ.get("LOG_CHANNEL", "-1004364861797") 
 
 WEBSITE_URL = os.environ.get("WEBSITE_URL", "https://hrry-stream.vercel.app/").rstrip("/")
@@ -110,7 +112,7 @@ async def root_handler(request):
         "target_website": WEBSITE_URL
     }, headers=CORS_HEADERS)
 
-# --- DIRECT WEB UPLOAD ENDPOINT ---
+# --- 1. DIRECT WEB UPLOAD ENDPOINT ---
 @routes.post("/upload")
 async def upload_from_web(request):
     temp_path = None
@@ -144,17 +146,25 @@ async def upload_from_web(request):
         except ValueError:
             pass
 
-        # Send File to Telegram Channel
+        # Send File to Telegram Private Channel with FloodWait Handling
         try:
             sent_msg = await app.send_document(
                 chat_id=target_chat,
                 document=temp_path,
-                caption=f"📁 **Web Upload:** `{filename}`"
+                caption=f"🌐 **Web Upload:** `{filename}`"
             )
-        except Exception as tg_err:
-            logging.error(f"Telegram Upload Error: {tg_err}")
+        except FloodWait as f_err:
+            logging.warning(f"Telegram Rate Limited: Waiting {f_err.value} seconds")
+            await asyncio.sleep(f_err.value)
+            sent_msg = await app.send_document(
+                chat_id=target_chat,
+                document=temp_path,
+                caption=f"🌐 **Web Upload:** `{filename}`"
+            )
+        except RPCError as rpc_err:
+            logging.error(f"Telegram RPC Error: {rpc_err}")
             return web.json_response(
-                {"status": "error", "message": f"Telegram Error: {str(tg_err)}"}, 
+                {"status": "error", "message": f"Telegram Error: {str(rpc_err)}"}, 
                 status=500, 
                 headers=CORS_HEADERS
             )
@@ -183,13 +193,16 @@ async def upload_from_web(request):
             headers=CORS_HEADERS
         )
     finally:
-        # Safe Temporary File Cleanup
+        # Safe Temp Disk Cleanup
         if temp_path and os.path.exists(temp_path):
             try:
                 os.remove(temp_path)
             except Exception as clean_err:
                 logging.warning(f"Temp File Removal Failed: {clean_err}")
+        # RAM Cleanup
+        gc.collect()
 
+# --- STREAMING ENGINE ENDPOINT ---
 @routes.get("/stream/{chat_id}/{message_id}")
 async def stream_handler(request):
     try:
@@ -271,6 +284,7 @@ async def stream_handler(request):
         logging.error(f"Streaming Error: {e}")
         return web.Response(status=500, text=f"Streaming Error: {str(e)}", headers=CORS_HEADERS)
 
+# --- TELEGRAM BOT COMMANDS & MEDIA HANDLER ---
 @app.on_message(filters.command("start") & filters.private)
 async def start_msg(client, message):
     text = (
@@ -282,13 +296,30 @@ async def start_msg(client, message):
     ])
     await message.reply_text(text, reply_markup=buttons, disable_web_page_preview=True)
 
+# --- 2. TELEGRAM PM UPLOAD -> AUTO COPY TO PRIVATE CHANNEL ---
 @app.on_message((filters.video | filters.document | filters.audio | filters.photo | filters.voice | filters.animation) & filters.private)
 async def handle_media(client, message):
-    status_msg = await message.reply_text("🔄 **Processing media file...**")
+    status_msg = await message.reply_text("🔄 **Processing and backing up media...**")
 
     try:
-        chat_id = message.chat.id
-        msg_id = message.id
+        target_chat = LOG_CHANNEL
+        try:
+            target_chat = int(target_chat)
+        except ValueError:
+            pass
+
+        # Step A: Copy file automatically to Private Channel
+        try:
+            log_msg = await message.copy(chat_id=target_chat)
+            chat_id = log_msg.chat.id
+            msg_id = log_msg.id
+        except Exception as copy_err:
+            logging.error(f"Failed to copy to channel: {copy_err}")
+            # Fallback to user chat ID if channel copy fails
+            chat_id = message.chat.id
+            msg_id = message.id
+
+        # Step B: Get Metadata & Links
         meta = get_media_meta(message)
         if not meta:
             await status_msg.edit_text("❌ **Unsupported media format.**")
@@ -317,6 +348,8 @@ async def handle_media(client, message):
     except Exception as err:
         logging.error(f"Error handling file: {err}")
         await status_msg.edit_text(f"❌ **Error Details:** `{str(err)}`")
+    finally:
+        gc.collect()
 
 async def main():
     server = web.Application()
@@ -334,3 +367,4 @@ if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.run_until_complete(main())
     loop.run_forever()
+
